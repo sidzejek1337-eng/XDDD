@@ -1,0 +1,2801 @@
+package com.taern.map
+{
+   import away3d.cameras.lenses.OrthographicLens;
+   import away3d.containers.View3D;
+   import away3d.entities.ParticleGroup;
+   import away3d.events.MouseEvent3D;
+   import away3d.materials.methods.ShadowMapMethodBase;
+   import com.eclecticdesignstudio.motion.Actuate;
+   import com.taern.animations.WalkType;
+   import com.taern.camera.CameraManager;
+   import com.taern.client.Client;
+   import com.taern.core.FrameTime;
+   import com.taern.core.TaernCore;
+   import com.taern.core.TaernGlobals;
+   import com.taern.effects.RimLightWithRotationMethod;
+   import com.taern.equipment.GearMini;
+   import com.taern.init.GameState;
+   import com.taern.init.Team3DObjectPool;
+   import com.taern.map.camera.MapCameraPositionManager;
+   import com.taern.map.chests.Chest;
+   import com.taern.map.effects.MapRainsManager;
+   import com.taern.map.effects.RainSetupVO;
+   import com.taern.map.gameObject.EnviroAddService;
+   import com.taern.map.gameObject.EnvironmentPlane3D;
+   import com.taern.map.gameObject.PlaneSheetModel;
+   import com.taern.map.ground.GroundTile3D;
+   import com.taern.map.interaction.InteractionTimeBlocker;
+   import com.taern.map.interaction.MapInteractionsManager;
+   import com.taern.map.mechanics.Mechanism2D;
+   import com.taern.map.mechanics.Mechanism2DModel;
+   import com.taern.map.mechanics.MechanismAddService;
+   import com.taern.map.mechanics.MechanismManager;
+   import com.taern.map.mechanics.layer.MechanismLayerParticle;
+   import com.taern.map.mechanics.map.MaskerVO;
+   import com.taern.map.mechanics.map.ParticleEmitter;
+   import com.taern.map.mechanics.map.ParticleEmitterForObjects;
+   import com.taern.map.pathfinding.MovementManager;
+   import com.taern.map.pathfinding.MovementManagerAI;
+   import com.taern.map.pathfinding.Region;
+   import com.taern.map.team.MapObject;
+   import com.taern.map.team.Team;
+   import com.taern.map.team.TeamAddService;
+   import com.taern.map.team.TeamMob;
+   import com.taern.map.team.TeamQM;
+   import com.taern.map.team.TeamType;
+   import com.taern.map.team.TeamUser;
+   import com.taern.map.team.preload.TeamsMobGPUPreloader;
+   import com.taern.map.transform.CoordinatesHelper;
+   import com.taern.map.vo.AreaData;
+   import com.taern.map.vo.GroundData;
+   import com.taern.map.vo.MechanismData;
+   import com.taern.mouse.CursorLayer;
+   import com.taern.ogsl.OGSLManager;
+   import com.taern.particles.MapParticleObjectPool;
+   import com.taern.performance.FPSManager;
+   import com.taern.server.MovementServer;
+   import com.taern.server.vo.AreaSetupVO;
+   import com.taern.sound.SoundUI;
+   import com.taern.sound.TaernSoundEngine;
+   import com.taern.tools.EnterFrameSignal;
+   import com.taern.tools.dbg.dbgLogVal;
+   import com.taern.tools.dbg.dbgTimeStart;
+   import com.taern.tools.dbg.dbgTimeStop;
+   import com.taern.tools.dbg2.FPSMeterByBundle;
+   import com.taern.tools.primitiveModels.BooleanModel;
+   import com.taern.tools.primitiveModels.PointModel;
+   import com.taern.tools.timer.EasyTimer;
+   import com.taern.tools.tracking.UserTracking;
+   import com.taern.ui.UIManager;
+   import com.taern.ui.loader.IMapPreloader;
+   import com.taern.ui.loader.MemoryManager;
+   import com.taern.ui.map.MapStarlingContainer;
+   import com.taern.utils.ArrayUtils;
+   import com.taern.utils.Dbg;
+   import com.taern.utils.DebugDrawUtil;
+   import com.taern.utils.MathUtils;
+   import com.taern.utils.TextUtils;
+   import com.taern.utils.TimeUtils;
+   import com.taern.utils.func.dummy;
+   import com.taern.utils.func.isMobile;
+   import com.taern.utils.func.traceError;
+   import com.taern.utils.func.traceWarning;
+   import com.taern.utils.settings.DebugSettings;
+   import com.taern.utils.settings.Flags;
+   import com.taern.utils.settings.Path;
+   import com.taern.utils.settings.Settings;
+   import flash.errors.IllegalOperationError;
+   import flash.geom.Point;
+   import flash.geom.Vector3D;
+   import org.osflash.signals.Signal;
+   import starling.display.Sprite;
+   
+   public class MapManager3D
+   {
+      
+      protected static var _instance:MapManager3D;
+      
+      public static var MAX_TEAMS_USER_VISIBLE:uint = 150;
+      
+      public static var MAX_TEAMS_NPC_VISIBLE:uint = 150;
+      
+      public static var MIN_DISTANCE_VISIBLE_USERS:uint = 0;
+      
+      public static var MIN_DISTANCE_VISIBLE_NPC:uint = 20;
+      
+      public static var MAP_PRELOAD:Boolean = false;
+      
+      protected var _selectedMapObject:MapObject;
+      
+      private var _targetMapObjectToSelect:MapObject;
+      
+      private var _selectedByTap:Boolean = false;
+      
+      protected var _mapView3D:MapView3D;
+      
+      protected var _screen:Sprite;
+      
+      protected var _areaId:Number = 0;
+      
+      protected var _instanceIdUnique:int;
+      
+      private var _instanceName:String = "";
+      
+      private var _instanceId:int = -1;
+      
+      protected const _mapObjects:Vector.<MapObject> = new Vector.<MapObject>(0);
+      
+      protected const _mapObjectsOver:Vector.<MapObject> = new Vector.<MapObject>(0);
+      
+      protected var _teams:Vector.<Team> = new Vector.<Team>(0);
+      
+      protected var _chests:Vector.<Chest> = new Vector.<Chest>(0);
+      
+      public const maskersVectorMM:Vector.<MaskerVO> = new Vector.<MaskerVO>(0);
+      
+      protected const _particleEmitters:Vector.<ParticleEmitter> = new Vector.<ParticleEmitter>(0);
+      
+      private const _particleEmittersForObjects:Vector.<ParticleEmitterForObjects> = new Vector.<ParticleEmitterForObjects>(0);
+      
+      protected var _distanceVisible:Number = 10;
+      
+      protected var _distanceClick:Number = 1;
+      
+      protected var _leader:Boolean = true;
+      
+      private var _distanceVisibleReducedUsers:int = 40;
+      
+      private var _distanceVisibleReducedNPC:int = 40;
+      
+      private var _lastTimeRecalculatedDistance:Number = 0;
+      
+      private var _initTeamModelsVec:Vector.<Team> = new Vector.<Team>();
+      
+      protected var _view3D:View3D;
+      
+      protected var _mapPreloader:IMapPreloader;
+      
+      protected var _completeObserver:CompleteObserver;
+      
+      private var _frameBaseLoadingObserver:CompleteObserver;
+      
+      protected var _teamsMobGPUPreloader:TeamsMobGPUPreloader;
+      
+      protected var _marginTop:Number;
+      
+      protected var _marginRight:Number;
+      
+      protected var _marginBottom:Number;
+      
+      protected var _marginLeft:Number;
+      
+      protected var _marginTrigger:Boolean;
+      
+      private var _highLightFlag:Boolean;
+      
+      private var _mapClearService:MapClearService;
+      
+      protected var _savedProjectionHeight:Number;
+      
+      protected var _savedFar:Number;
+      
+      private var _attackDistance:int = 3;
+      
+      private var _areaData:AreaData;
+      
+      private var _clickParticle:ParticleGroup;
+      
+      private var _mechParticle:ParticleGroup;
+      
+      private var _destinationParticle:ParticleGroup;
+      
+      private const _centerLayers:Vector.<MechanismLayerParticle> = new Vector.<MechanismLayerParticle>(0);
+      
+      private var _cameraPositionManager:MapCameraPositionManager;
+      
+      private var _movementManager:MovementManager;
+      
+      private var _currentRolloverRegion:int;
+      
+      private const _centerPoint:Point = new Point();
+      
+      private const _tmpPoint:Point = new Point();
+      
+      private const _tmpPoint3D:Vector3D = new Vector3D();
+      
+      private const _tmpPoint3D2:Vector3D = new Vector3D();
+      
+      public const heroScreenPosition:PointModel = new PointModel();
+      
+      public const mouse3DPosition:PointModel = new PointModel();
+      
+      public const mouseTilesPosition:PointModel = new PointModel();
+      
+      private var _uiManager:UIManager;
+      
+      private var _dbg2d:Sprite;
+      
+      private var _cameraContainer:CameraContainer;
+      
+      private var _rain:MapRainsManager;
+      
+      private var _areaVO:AreaSetupVO;
+      
+      private var _previousAreaData:AreaData;
+      
+      protected var _interactions:MapInteractionsManager;
+      
+      private var _startTimer:int;
+      
+      private const _fpsBundle:FPSMeterByBundle = new FPSMeterByBundle();
+      
+      public const isMapViewReady:BooleanModel = new BooleanModel(false);
+      
+      public const mapClickedSignal:Signal = new Signal();
+      
+      public const mapViewReadySignal:Signal = new Signal();
+      
+      public const fightSummaryExitSignal:Signal = new Signal();
+      
+      public const onFrameBasedLoadReady:Signal = new Signal();
+      
+      public const initializedTeamAddedSignal:Signal = new Signal(Team);
+      
+      public const teamRemovedSignal:Signal = new Signal(Team);
+      
+      public const teamUpdatedSignal:Signal = new Signal(Team);
+      
+      public const teamStatusUpdatedSignal:Signal = new Signal(Team);
+      
+      public const teamUpdatedNoStatusSignal:Signal = new Signal(Team);
+      
+      public const myTeamMovedSignal:Signal = new Signal();
+      
+      public const cameraMovedSignal:Signal = new Signal();
+      
+      public const clickRequestSignal:Signal = new Signal();
+      
+      public const clearedSignal:Signal = new Signal();
+      
+      public const chestRemovedSignal:Signal = new Signal(Chest);
+      
+      private var _instanceQuestBlock:Boolean = false;
+      
+      private var _fpsManager:FPSManager;
+      
+      public function MapManager3D()
+      {
+         super();
+         _highLightFlag = true;
+         _fpsManager = new FPSManager();
+      }
+      
+      public static function set instance(ins:MapManager3D) : void
+      {
+         _instance = ins;
+      }
+      
+      public static function getInstance() : MapManager3D
+      {
+         return _instance || (_instance = new MapManager3D());
+      }
+      
+      public function initGameplay() : void
+      {
+         _movementManager = MovementManager.getInstance();
+         _cameraPositionManager = new MapCameraPositionManager(TaernCore.instance.away.cameraMap,this);
+         CameraManager.getInstance().initCameraPositionManager(_cameraPositionManager);
+         _cameraContainer = new CameraContainer(_cameraPositionManager);
+         _rain = new MapRainsManager(RainSetupVO.createNormalSetups(),_cameraContainer);
+         _uiManager = UIManager.getInstance();
+         TaernGlobals.fpsMeterBundle1secs.changedNoArgSignal.add(onFPSDetection);
+      }
+      
+      public function destroyGamplay() : void
+      {
+         _rain.destroy();
+         _rain = null;
+         _cameraPositionManager.destroy();
+         _cameraPositionManager = null;
+         _cameraContainer.destroy();
+         _cameraContainer = null;
+         myTeamMovedSignal.remove(TaernSoundEngine.instance.onMove);
+      }
+      
+      public function initMap(areaId:int, view:View3D) : MapInteractionsManager
+      {
+         _areaId = areaId;
+         _view3D = view;
+         if(_mapView3D)
+         {
+            traceWarning("should be destroyed already",true);
+         }
+         _cameraPositionManager.newArea = true;
+         _mapView3D = MapViewFactory.getMapView(areaId);
+         _view3D.scene.addChild(_mapView3D);
+         if(!_mapView3D.initialized)
+         {
+            _mapView3D.initContent();
+            _mapView3D.addChild(_cameraContainer);
+            _mapView3D.addEventListener("click3d",onMapClick);
+            _mapView3D.mouse3DPosition.changedSignal.add(refreshMousePositions);
+         }
+         else if(_mapView3D.checkInit())
+         {
+            _mapView3D.reInitContent();
+         }
+         else
+         {
+            _mapView3D.initContent();
+            _mapView3D.addChild(_cameraContainer);
+            _mapView3D.addEventListener("click3d",onMapClick);
+            _mapView3D.mouse3DPosition.changedSignal.add(refreshMousePositions);
+         }
+         _interactions = _mapView3D.interactions;
+         refreshMousePositions();
+         return _interactions;
+      }
+      
+      private function refreshMousePositions() : void
+      {
+         if(_mapView3D == null)
+         {
+            return;
+         }
+         mouseTilesPosition.setXY(_mapView3D.mouseTilePosition.x,_mapView3D.mouseTilePosition.y);
+         mouse3DPosition.setXY(_mapView3D.mouse3DPosition.x,_mapView3D.mouse3DPosition.y);
+      }
+      
+      private function onMapClick(event:MouseEvent3D) : void
+      {
+         mapClickedSignal.dispatch();
+      }
+      
+      private function onFPSDetection() : void
+      {
+         if(!GameState.isFight.value)
+         {
+            _fpsManager.checkFpsMap(Math.round(TaernGlobals.fpsMeterBundle1secs.value));
+         }
+      }
+      
+      public function createMapView() : MapView3D
+      {
+         return new MapView3D();
+      }
+      
+      public function prepareToLoading() : void
+      {
+         _mapPreloader = _uiManager.showMapPreloader();
+      }
+      
+      public function onEnterNewArea(vo:AreaSetupVO) : void
+      {
+         TaernGlobals.fpsMeterBundle1secs.changedNoArgSignal.remove(onFPSDetection);
+         if(!_mapPreloader)
+         {
+            _mapPreloader = _uiManager.showMapPreloader();
+         }
+         _areaVO = vo;
+         createNewArea();
+      }
+      
+      protected function createNewArea() : void
+      {
+         var aMapData:Array;
+         var instData:Array;
+         var groundData:GroundData;
+         var shadowsData:String;
+         var tempTeams:Array;
+         var arrTeamUser:Array;
+         var arrTeamAi:Array;
+         var arrTeamQM:Array;
+         var arrChests:Array;
+         var preloadedModelArray:Array;
+         var orthographicLens:OrthographicLens;
+         var loadGround:GroundTile3D;
+         var loadPlane:EnvironmentPlane3D;
+         _startTimer = TimeUtils.getTimerANR();
+         dbgTimeStart("map loading");
+         dbgTimeStart("map onEnterNewArea");
+         dbgTimeStart("map onEnterNewArea 1");
+         if(DebugSettings.CLEAR_MEMORY_ON_ENTER_AREA)
+         {
+            Team3DObjectPool.getInstance().clearAllNotBusy();
+            MemoryManager.getInstance().disposeAllUnused();
+         }
+         MAP_PRELOAD = true;
+         OGSLManager.getInstance().parseShaders(_areaVO.shaderData || "");
+         if(Settings.TEAMS_AI_GPU_PRELOAD)
+         {
+            if(_teamsMobGPUPreloader)
+            {
+               _teamsMobGPUPreloader.destroy();
+               _teamsMobGPUPreloader = null;
+            }
+         }
+         TeamAddService.instance.clear();
+         MechanismAddService.instance.clear();
+         EnviroAddService.instance.clear();
+         _completeObserver = new CompleteObserver("MapManager");
+         _completeObserver.addOnce(onLoadings_Ready);
+         if(Settings.FRAME_BASE_PRELOAD)
+         {
+            if(_frameBaseLoadingObserver)
+            {
+               _frameBaseLoadingObserver.destroy();
+            }
+            _frameBaseLoadingObserver = new CompleteObserver("MapManager-frameBase");
+            _frameBaseLoadingObserver.addOnce(onFrameBaseLoad_Ready);
+         }
+         aMapData = _areaVO.mapData.split(",");
+         _areaId = parseInt(aMapData[0]);
+         if(Settings.DEPTH_RENDERING && (_areaId == 264 || _areaId == 209))
+         {
+            Settings.HEIGHT_MAP = true;
+         }
+         else
+         {
+            Settings.HEIGHT_MAP = false;
+         }
+         dbgTimeStop("map onEnterNewArea 1");
+         dbgTimeStart("map onEnterNewArea 2");
+         _previousAreaData = _areaData;
+         _areaData = new AreaData();
+         _areaData.idArea = parseInt(aMapData[0]);
+         _areaData.distanceVisible = Number(aMapData[1]);
+         _distanceVisible = Number(aMapData[1]);
+         _distanceVisibleReducedUsers = _distanceVisible;
+         _distanceVisibleReducedNPC = _distanceVisible;
+         _areaData.scale = Number(aMapData[5]);
+         if(_areaData.scale == 1.5)
+         {
+            Settings.MAP_MODEL_SCALE = Settings.MAP_MODEL_SCALE_INSIDE;
+         }
+         else
+         {
+            Settings.MAP_MODEL_SCALE = Settings.MAP_MODEL_SCALE_OUTSIDE;
+         }
+         CameraManager.mapScale = _areaData.scale;
+         Settings.MAP_CELL_SIZE = 1024 / CameraManager.mapScale;
+         _areaData.marginTop = Number(aMapData[6]);
+         _areaData.marginRight = Number(aMapData[7]);
+         _areaData.marginBottom = Number(aMapData[8]);
+         _areaData.marginLeft = Number(aMapData[9]);
+         _areaData.isMask = aMapData[17] == "1";
+         _areaData.maskScale = aMapData[15];
+         _areaData.maskAlpha = aMapData[16];
+         _areaData.marginTrigger = aMapData[10] == "1";
+         _marginTop = _areaData.marginTop;
+         _marginRight = _areaData.marginRight;
+         _marginBottom = _areaData.marginBottom;
+         _marginLeft = _areaData.marginLeft;
+         _marginTrigger = _areaData.marginTrigger;
+         instData = aMapData[11].split("|");
+         _instanceIdUnique = int(instData[0]);
+         if(_instanceIdUnique != -1)
+         {
+            _instanceName = instData[1];
+            _instanceId = int(instData[2]);
+            _instanceQuestBlock = int(instData[3]) == 1;
+         }
+         else
+         {
+            _instanceId = -1;
+            _instanceName = "";
+            _instanceQuestBlock = false;
+         }
+         _areaData.instanceName = _instanceName;
+         _areaData.version = aMapData[12];
+         FrameTime.onEnterArea("a" + _areaData.idArea + " i" + _instanceId);
+         UserTracking.addAction(this,_areaData.idArea.toString(),"new map");
+         groundData = new GroundData();
+         groundData.idArea = parseInt(aMapData[0]);
+         groundData.width = Number(aMapData[2]);
+         groundData.height = Number(aMapData[3]);
+         groundData.offsetX2D = Number(aMapData[13]);
+         groundData.offsetY2D = Number(aMapData[14]);
+         groundData.idGraphic = Number(aMapData[18]);
+         if(!MathUtils.isNaNANR(Number(aMapData[19])))
+         {
+            areaData.cameraDX = Number(aMapData[19]);
+         }
+         if(!MathUtils.isNaNANR(Number(aMapData[20])))
+         {
+            areaData.cameraDZ = Number(aMapData[20]);
+         }
+         if(aMapData.length > 21 && !MathUtils.isNaNANR(Number(aMapData[21])))
+         {
+            areaData.layer = Number(aMapData[21]);
+         }
+         if(aMapData.length > 22 && !MathUtils.isNaNANR(Number(aMapData[22])))
+         {
+            areaData.lightMulti = Number(aMapData[22]);
+         }
+         if(aMapData.length > 23)
+         {
+            areaData.mappingDynamic = aMapData[23] == "1";
+         }
+         if(aMapData.length > 24)
+         {
+            areaData.blockPets = aMapData[24] == "1";
+         }
+         if(aMapData[4] == "")
+         {
+            groundData.skyUrl = Path.forTag("<sky_texture>","sky_negX2s");
+         }
+         else
+         {
+            groundData.skyUrl = Path.forTag("<sky_texture>",aMapData[4]);
+         }
+         if(!_movementManager)
+         {
+            _movementManager = MovementManager.getInstance();
+         }
+         _movementManager.initMapping(_areaId,_instanceIdUnique,areaData.mappingDynamic);
+         addObjectToLoad(_movementManager.mapping,"mapping");
+         shadowsData = "";
+         tempTeams = _areaVO.teamsData.split("&");
+         arrTeamUser = tempTeams[0].split("%");
+         arrTeamAi = tempTeams[1].split("%");
+         arrTeamQM = tempTeams[2].split("%");
+         arrChests = tempTeams[3].split("%");
+         if(!Settings.TEAM_MODELS_OFF && Settings.TEAMS_AI_GPU_PRELOAD)
+         {
+            preloadedModelArray = _areaVO.preloadModelsData.split("%");
+         }
+         orthographicLens = TaernCore.instance.away.orthographicLens;
+         if(Settings.CAMERA_HACK_GPU_PRELOAD)
+         {
+            _savedProjectionHeight = orthographicLens.projectionHeight;
+            _savedFar = orthographicLens.far;
+            orthographicLens.projectionHeight = 5000;
+            orthographicLens.far = 5000;
+         }
+         dbgTimeStop("map onEnterNewArea 2");
+         if(!_mapView3D.initialized)
+         {
+            dbgTimeStart("map onEnterNewArea 4.1 map view");
+            Dbg.traceTimeD("MapManager3d: _mapView3D.initialized");
+            _mapView3D.createMapView(_areaId,groundData,_areaVO.lightsData,shadowsData,_areaVO.planeSheetsData,_areaVO.cloudData,"",_areaVO.forceLight);
+            dbgTimeStop("map onEnterNewArea 4.1 map view");
+            for each(loadGround in _mapView3D.groundView.groundObjects)
+            {
+               addObjectToLoad(loadGround,"GroundTile3D " + loadGround.column + "," + loadGround.row);
+            }
+            for each(loadPlane in _mapView3D.planeSheetView.mergeVector)
+            {
+               addObjectToLoad(loadPlane,"PlaneSheet id:" + loadPlane.data.id);
+            }
+         }
+         PlaneSheetModel.getInstance().initMap(_mapView3D.planeSheetView);
+         MechanismManager.getInstance().mechVector = _mapView3D.mechVector;
+         addMechanismsOnEnterAreaFrames(_areaVO.mechanismData);
+         dbgTimeStart("map onEnterNewArea 6");
+         addTeamsOnEnter(arrTeamUser,arrTeamAi,arrTeamQM,preloadedModelArray,arrChests);
+         dbgTimeStop("map onEnterNewArea 6.1");
+         dbgTimeStop("map onEnterNewArea 6");
+         dbgTimeStart("map onEnterNewArea 7");
+         if(Settings.SOUND)
+         {
+            addObjectToLoad(TaernSoundEngine.instance,"sounds");
+            TaernSoundEngine.instance.soundPreloadedSignal.addOnce(function():void
+            {
+               markObjectAsLoaded(TaernSoundEngine.instance,"sounds");
+            });
+            TaernSoundEngine.instance.loadTemplates(_areaVO.soundsData);
+            TaernSoundEngine.instance.onMove(false);
+            myTeamMovedSignal.add(TaernSoundEngine.instance.onMove);
+         }
+         UIManager.hideDungeonMaskVote.setVote(this,!_areaData.isMask);
+         _uiManager.dungeonMask.setDefaultProperties(_areaData.maskScale,_areaData.maskAlpha);
+         if(_areaData.isMask)
+         {
+            _uiManager.hideFocusMask();
+         }
+         else
+         {
+            _uiManager.showFocusMask();
+         }
+         dbgTimeStop("map onEnterNewArea 7");
+         dbgLogVal("area id",_areaData.idArea);
+         dbgTimeStop("map onEnterNewArea");
+      }
+      
+      protected function onFrameBaseLoad_Ready() : void
+      {
+         calculateReducedViewDistance();
+         calculateReducedViewDistanceNPC();
+         hideTeamsOutOfReducedRange(false);
+         onFrameBasedLoadReady.dispatch();
+      }
+      
+      private function addTeamsOnEnter(arrTeamUser:Array, arrTeamAi:Array, arrTeamQM:Array, preloadedModelArray:Array, arrChests:Array) : void
+      {
+         if(Settings.FRAME_BASE_PRELOAD)
+         {
+            _completeObserver.addProcess(TeamAddService.instance,"addTeamsOnEnter",TeamAddService.instance.readySignal);
+            _frameBaseLoadingObserver.addProcess(TeamAddService.instance,"_frameBaseLoadingObserver.addTeamsOnEnter",TeamAddService.instance.readySignal);
+            TeamAddService.instance.load(arrTeamUser,arrTeamAi,arrTeamQM,preloadedModelArray,arrChests);
+            return;
+         }
+      }
+      
+      private function onLoadings_Ready() : void
+      {
+         var orthographicLens:OrthographicLens = null;
+         dbgTimeStop("map loading");
+         dbgTimeStart("map onLoadings_Ready");
+         if(_mapView3D.lightsView)
+         {
+            Team3DObjectPool.getInstance().reloadLightsInPool(_mapView3D.lightsView.lightPicker);
+            Team3DObjectPool.getInstance().reloadShadowsInPool(_mapView3D.lightsView.simpleShadowMapMethodBase);
+         }
+         _completeObserver.destroy();
+         _completeObserver = null;
+         customsOnMapReady();
+         _mapView3D.visible = true;
+         if(_teamsMobGPUPreloader)
+         {
+            _teamsMobGPUPreloader.destroy();
+            _teamsMobGPUPreloader = null;
+         }
+         MAP_PRELOAD = false;
+         if(Settings.CAMERA_HACK_GPU_PRELOAD)
+         {
+            orthographicLens = TaernCore.instance.away.orthographicLens;
+            orthographicLens.projectionHeight = _savedProjectionHeight;
+            orthographicLens.far = _savedFar;
+         }
+         dbgTimeStop("map onLoadings_Ready");
+         dbgTimeStart("map postMapViewReady");
+         EnterFrameSignal.signal.addOnce(postMapViewReady,"MapManager3D.postMapViewReady");
+         TaernGlobals.fpsMeterBundle1secs.changedNoArgSignal.add(onFPSDetection);
+      }
+      
+      public function revertMask() : void
+      {
+         if(_areaData)
+         {
+            UIManager.hideDungeonMaskVote.setVote(this,_areaData.isMask);
+         }
+      }
+      
+      private function addMechanismsOnEnterAreaFrames(mechanismsData:String) : void
+      {
+         _completeObserver.addProcess(MechanismAddService.instance,"addMechanismOnEnterArea",MechanismAddService.instance.readySignal);
+         _frameBaseLoadingObserver.addProcess(MechanismAddService.instance,"addMechanismOnEnterArea",MechanismAddService.instance.readySignal);
+         MechanismAddService.instance.load(mechanismsData);
+      }
+      
+      public function onMechanismReloadPack(mechanismsData:String) : void
+      {
+         var arr:Array = mechanismsData.split("[--]");
+         MechanismManager.getInstance().onMechanismReloadPack(arr);
+      }
+      
+      public function onNewMechanism(msg:String, remoteView:Boolean = false) : void
+      {
+         MechanismManager.getInstance().addNewMechanism(new MechanismData(msg),remoteView);
+      }
+      
+      public function onRemoveMechanism(id:int) : void
+      {
+         MechanismManager.getInstance().removeMechanismById(id);
+      }
+      
+      public function onNewTeamInSight(team:Team, mapMove:Boolean = false, newX3d:Number = 0, newY3d:Number = 0, onEnterNewArea:Boolean = false, speed:int = 190, animType:int = 4, animSpeedMulti:Number = 1, initTeamView:Boolean = true) : Team
+      {
+         var oldTeam:Team = getTeamById(team.id);
+         if(oldTeam)
+         {
+            if(_completeObserver)
+            {
+               _completeObserver.markAsCompleted(team);
+            }
+            team.destroy();
+            team = oldTeam;
+            team.removeCancel();
+            if(onEnterNewArea)
+            {
+               Dbg.criticalError("2  teams with same id - shouldn\'t happen! Please inform drygu :)");
+            }
+         }
+         else
+         {
+            if(initTeamView)
+            {
+               team.initTeamView();
+            }
+            addTeam(team);
+            particleEmmiterForObjectRefresh();
+         }
+         var anim:String = WalkType.getAnim(animType);
+         if(newX3d != 0 || newY3d != 0)
+         {
+            if(newX3d != team.x || newY3d != team.y)
+            {
+               team.modelGoTo(newX3d,newY3d,mapMove,0,0,anim,speed,animSpeedMulti);
+            }
+         }
+         hideIfReducedView(team);
+         teamMoved(team);
+         return team;
+      }
+      
+      private function willBeVisible(team:Team) : Boolean
+      {
+         if(team.isUser())
+         {
+            if(countUserTeams() - 1 > MAX_TEAMS_USER_VISIBLE && _distanceVisibleReducedUsers < _distanceVisible)
+            {
+               if(!isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedUsers))
+               {
+                  return false;
+               }
+            }
+         }
+         else if(countNpcTeams() > MAX_TEAMS_NPC_VISIBLE && _distanceVisibleReducedNPC < _distanceVisible)
+         {
+            if(!isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedNPC))
+            {
+               return false;
+            }
+         }
+         return true;
+      }
+      
+      private function hideIfReducedView(team:Team) : void
+      {
+         if(!willBeVisible(team))
+         {
+            hideTeam(team);
+         }
+      }
+      
+      private function addTeam(team:Team) : void
+      {
+         _teams.push(team);
+         addMapObject(team);
+         if(team.team3D)
+         {
+            initializedTeamAddedSignal.dispatch1(team);
+         }
+      }
+      
+      private function removeTeam(team:Team) : void
+      {
+         ArrayUtils.remove(_initTeamModelsVec,team);
+         if(ArrayUtils.remove(_teams,team))
+         {
+            if(team == selectedMapObject)
+            {
+               selectedMapObject = null;
+            }
+            markObjectAsLoaded(team);
+            team.destroy();
+            removeMapObject(team);
+            teamRemovedSignal.dispatch1(team);
+         }
+      }
+      
+      public function onTeamChanged(id:String, wojny:String, licznosc:int, minLvLPower:int, power:int, isMobileTeam:Boolean) : void
+      {
+         var team:TeamUser = getTeamById(id) as TeamUser;
+         if(team != null)
+         {
+            team.stworzWojny(wojny);
+            team.membersAmount = licznosc;
+            team.minLvLPower.value = minLvLPower;
+            team.power.value = power;
+            team.isMobile = isMobileTeam;
+            team.refreshStatus();
+            team.updateVisual();
+            teamUpdatedSignal.dispatch1(team);
+            teamUpdatedNoStatusSignal.dispatch1(team);
+         }
+      }
+      
+      public function onTeamQmAnimation(teamId:String, rotation:Number, animationConfig:String, transition:String) : void
+      {
+         var delay:Number = NaN;
+         var team:TeamQM = TeamQM(getTeamById(teamId));
+         if(team != null)
+         {
+            delay = 0;
+            if(rotation != -1)
+            {
+               delay = team.rotateAngle(rotation);
+            }
+            if(animationConfig != "")
+            {
+               team.changeAnimationConfig(animationConfig,true,0);
+            }
+         }
+      }
+      
+      public function teamAnimation(teamId:String, anim:String, forceStopAtEnd:Boolean = false) : void
+      {
+         var team:TeamUser = TeamUser(getTeamById(teamId));
+         if(team != null)
+         {
+            team.launchAnim(anim,forceStopAtEnd);
+         }
+      }
+      
+      public function teamRotate(teamId:String, rotation:int) : void
+      {
+         var team:TeamUser = TeamUser(getTeamById(teamId));
+         if(team != null)
+         {
+            if(rotation != -1)
+            {
+               if(team.moving)
+               {
+                  team.requiredRotation = rotation;
+               }
+               else
+               {
+                  team.rotateAngle(rotation);
+               }
+            }
+         }
+      }
+      
+      public function onTeamMovement(id:String, x:Number, y:Number, x3d:int, y3d:int, nextX3d:int = 0, nextY3d:int = 0, speed:int = 190, animType:int = 4, animSpeedMulti:Number = 1) : void
+      {
+         var anim:String = WalkType.getAnim(animType);
+         var team:Team = getTeamById(id);
+         if(team != null)
+         {
+            if(team == Client.myTeam && _leader)
+            {
+               _movementManager.onServerUpdate(CoordinatesHelper.from3DToTile2D_X(x),CoordinatesHelper.from3DToTile2D_Y(y));
+               removeInvisible();
+            }
+            else
+            {
+               if(team is TeamUser)
+               {
+                  if(TeamUser(team).lookOverride != null)
+                  {
+                     animSpeedMulti = 4;
+                  }
+                  else
+                  {
+                     animSpeedMulti = WalkType.getAnimSpeedMultiUser(animType);
+                  }
+               }
+               if(x3d != 0 && y3d != 0)
+               {
+                  team.modelGoTo(x3d,y3d,false,nextX3d,nextY3d,anim,speed,animSpeedMulti);
+               }
+               else
+               {
+                  team.modelGoTo(x,y,false,nextX3d,nextY3d,anim,speed,animSpeedMulti);
+               }
+               if(!isVisible(CoordinatesHelper.from3DToTile2D_X(x),CoordinatesHelper.from3DToTile2D_Y(y)))
+               {
+                  team.removeWithTween();
+                  recalculateReducedViewDistance();
+               }
+               else if(team.isUser())
+               {
+                  if(_distanceVisibleReducedUsers < _distanceVisible)
+                  {
+                     if(!isInRange(CoordinatesHelper.from3DToTile2D_X(x),CoordinatesHelper.from3DToTile2D_Y(y),_distanceVisibleReducedUsers))
+                     {
+                        hideTeam(team,true);
+                     }
+                     else
+                     {
+                        unHideTeam(team,true);
+                     }
+                  }
+               }
+               else if(!isInRange(CoordinatesHelper.from3DToTile2D_X(x),CoordinatesHelper.from3DToTile2D_Y(y),_distanceVisibleReducedNPC))
+               {
+                  hideTeam(team,true);
+               }
+               else
+               {
+                  unHideTeam(team,true);
+               }
+            }
+         }
+      }
+      
+      public function moveInterrupted(teamId:String, x3d:int = 0, y3d:int = 0) : void
+      {
+         var movementManager:MovementManager = null;
+         var team:Team = getTeamById(teamId);
+         if(team != null)
+         {
+            if(team == Client.myTeam)
+            {
+               movementManager = MovementManager.getInstance();
+               movementManager.cancelMovement();
+            }
+            team.modelGoTo(x3d,y3d);
+         }
+      }
+      
+      public function updateShadowMethods(sm:ShadowMapMethodBase) : void
+      {
+         var i:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            Team(_teams[i]).updateShadowMethods(sm);
+            i++;
+         }
+         if(_mapView3D)
+         {
+            _mapView3D.updateShadowMethod(sm);
+         }
+      }
+      
+      public function updateSelfShadowMethods(sm:ShadowMapMethodBase) : void
+      {
+         var i:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            Team(_teams[i]).updateShadowMethods(sm);
+            i++;
+         }
+      }
+      
+      public function updateRimLights(rimLightMethod:RimLightWithRotationMethod) : void
+      {
+         var i:int = 0;
+         var j:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            _teams[i].team3D.rimLightMethod = rimLightMethod;
+            if(_teams[i].team3D.slots != null)
+            {
+               for(j = 0; j < _teams[i].team3D.slots.length; )
+               {
+                  _teams[i].team3D.slots[j].enableRimlight(rimLightMethod != null);
+                  j++;
+               }
+            }
+            i++;
+         }
+      }
+      
+      protected function removeInvisible() : void
+      {
+         for each(var team:Team in _teams)
+         {
+            if(!isVisible(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y)))
+            {
+               if(team.id != Client.myTeam.id)
+               {
+                  team.removeWithTween();
+               }
+            }
+         }
+         for each(var chest:Chest in _chests)
+         {
+            if(!isVisible(CoordinatesHelper.from3DToTile2D_X(chest.x3D),CoordinatesHelper.from3DToTile2D_Y(chest.y3D)))
+            {
+               chest.remove();
+            }
+         }
+      }
+      
+      public function onTeamMoveFinished(t:Team) : void
+      {
+      }
+      
+      public function onMyStepFinished() : void
+      {
+      }
+      
+      public function removeFlagged() : void
+      {
+         var i:int = 0;
+         var t:Team = null;
+         var j:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            t = _teams[i];
+            if(t.removeFlag)
+            {
+               removeTeam(t);
+               i--;
+            }
+            i++;
+         }
+         if(_chests)
+         {
+            for(j = 0; j < _chests.length; )
+            {
+               if(_chests[j].removeFlag)
+               {
+                  (_chests[j] as IRemovable).destroy();
+                  _chests[j] = null;
+                  _chests.splice(j,1);
+                  j--;
+               }
+               j++;
+            }
+         }
+      }
+      
+      protected function isVisible(x:int, y:int) : Boolean
+      {
+         var dx:Number = Math.abs(_movementManager.serverX - x);
+         var dy:Number = Math.abs(_movementManager.serverY - y);
+         if(dx > _distanceVisible || dy > _distanceVisible)
+         {
+            return false;
+         }
+         return true;
+      }
+      
+      public function getTeamById(id:String) : Team
+      {
+         var team:Team = null;
+         var i:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            if(team.id == id)
+            {
+               return team;
+            }
+            i++;
+         }
+         return null;
+      }
+      
+      public function swapTeamAtId(id:String, team:Team) : void
+      {
+         var i:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            if(team.id == id)
+            {
+               _teams[i] = team;
+            }
+            i++;
+         }
+      }
+      
+      public function removeTeamById(teamId:String) : void
+      {
+         for each(var team:Team in _teams)
+         {
+            if(team.id == teamId)
+            {
+               removeTeam(team);
+               break;
+            }
+         }
+         recalculateReducedViewDistance();
+      }
+      
+      public function onTeamExit(msg:String, newTeamName:String) : void
+      {
+         var com:String = null;
+         var tab:Array = msg.split(",");
+         var teamId:String = tab[0];
+         var option:Number = parseInt(tab[1]);
+         var team:Team = getTeamById(teamId);
+         if(team != null)
+         {
+            switch(option)
+            {
+               case 0:
+                  break;
+               case 1:
+                  communicate(TextUtils.replace(TextUtils.ui("druzyna_zabita"),"[m1]",team.name));
+                  break;
+               case 2:
+                  com = TextUtils.replace(TextUtils.ui("druzyna_udala_sie"),"[m1]",team.name);
+                  com = TextUtils.replace(com,"[m2]",newTeamName);
+                  communicate(com);
+            }
+            removeTeamById(teamId);
+         }
+      }
+      
+      public function onJoin(teamId:String) : void
+      {
+         removeTeamById(teamId);
+      }
+      
+      public function onAFK(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var team:TeamUser = getTeamById(tab[0]) as TeamUser;
+         if(team)
+         {
+            team.afk.value = tab[1] == "1";
+         }
+      }
+      
+      public function onTeamAttack(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var n:Team = getTeamById(tab[0]);
+         var o:Team = getTeamById(tab[1]);
+         if(n != null)
+         {
+            n.status = 1;
+            n.attacker = 1;
+            n.refreshStatus();
+            teamStatusUpdatedSignal.dispatch1(n);
+         }
+         if(o != null)
+         {
+            o.status = 1;
+            o.attacker = 0;
+            o.refreshStatus();
+            teamStatusUpdatedSignal.dispatch1(o);
+            teamUpdatedSignal.dispatch1(o);
+         }
+      }
+      
+      public function onMyTeamChanged(teamId:String) : void
+      {
+         var oldMyTeam:TeamUser = Client.myTeam;
+         var newMyTeam:TeamUser = getTeamById(teamId) as TeamUser;
+         if(selectedMapObject != newMyTeam)
+         {
+            selectedMapObject = null;
+         }
+         if(newMyTeam)
+         {
+            if(oldMyTeam != newMyTeam)
+            {
+               Client.myTeam = newMyTeam;
+            }
+            teamUpdatedSignal.dispatch1(newMyTeam);
+            teamUpdatedNoStatusSignal.dispatch1(newMyTeam);
+         }
+         else
+         {
+            traceError("MY TEAM IS NULL! - WTF: " + teamId,true);
+         }
+      }
+      
+      public function updateTeamUserAddGear(team_id:String, gearStr:String) : void
+      {
+         var gear:GearMini = null;
+         var teamUser:TeamUser = TeamUser(getTeamById(team_id));
+         if(teamUser != null && !teamUser.destroyed)
+         {
+            if(teamUser.lowSlotManager != null)
+            {
+               gear = new GearMini(gearStr,true,teamUser.sex);
+               teamUser.lowSlotManager.addGearToSlot(gear);
+            }
+         }
+      }
+      
+      public function updateTeamUserRemoveGear(team_id:String, gearStr:String) : void
+      {
+         var gear:GearMini = null;
+         var team:Team = getTeamById(team_id);
+         if(!team || team.destroyed)
+         {
+            return;
+         }
+         var teamUser:TeamUser = TeamUser(team);
+         if(teamUser.lowSlotManager != null)
+         {
+            gear = new GearMini(gearStr,true);
+            teamUser.lowSlotManager.removeGearFromSlot(gear);
+         }
+      }
+      
+      public function onTeamStatusChanged(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var d:Team = Team(getTeamById(tab[0]));
+         if(d != null)
+         {
+            d.status = parseInt(tab[1]);
+            d.refreshStatus();
+            teamUpdatedSignal.dispatch1(d);
+            teamStatusUpdatedSignal.dispatch1(d);
+         }
+      }
+      
+      public function onTeamMembersAmountChanged(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var team:Team = Team(getTeamById(tab[0]));
+         if(team != null && !team.destroyed)
+         {
+            team.membersAmount = parseInt(tab[1]);
+            if(tab.length > 2)
+            {
+               team.power.value = parseInt(tab[2]);
+            }
+            if(team.team3D)
+            {
+               team.team3D.updateTeamMobMemberAmount();
+            }
+            teamUpdatedSignal.dispatch1(team);
+            teamUpdatedNoStatusSignal.dispatch1(team);
+         }
+      }
+      
+      public function onTeamStatusChangedPvP(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var d:TeamUser = TeamUser(getTeamById(tab[0]));
+         if(d != null)
+         {
+            d.pvp = parseInt(tab[1]);
+            d.sadist = parseInt(tab[2]);
+            d.refreshStatus();
+         }
+      }
+      
+      public function onTeamFractionChanged(msg:String) : void
+      {
+         var tab:Array = msg.split(",");
+         var team:TeamUser = TeamUser(getTeamById(tab[0]));
+         if(team != null)
+         {
+            team.fraction = parseInt(tab[1]);
+            team.fractionRank = parseInt(tab[2]);
+            team.pvpFlag = parseInt(tab[3]);
+            team.refreshStatus();
+         }
+      }
+      
+      public function onTeamLeaderChanged(msg:String) : void
+      {
+         var teamId:String = msg.split("#")[0];
+         var teamToUpdate:TeamUser = TeamUser(getTeamById(teamId));
+         if(teamToUpdate == null)
+         {
+            return;
+         }
+         teamToUpdate.tryRecycleTeam();
+         teamToUpdate.loadData(msg);
+         if(willBeVisible(teamToUpdate))
+         {
+            teamToUpdate.initTeamView(false);
+         }
+         else
+         {
+            teamToUpdate.initTeamView(false,true);
+            hideTeam(teamToUpdate,false);
+         }
+         teamToUpdate.updateVisual();
+         if(teamToUpdate.lowSlotManager != null)
+         {
+            teamToUpdate.lowSlotManager.initObject3d(teamToUpdate.team3D);
+         }
+         teamToUpdate.changedSignal.dispatch();
+         teamUpdatedSignal.dispatch1(teamToUpdate);
+         teamUpdatedNoStatusSignal.dispatch1(teamToUpdate);
+      }
+      
+      public function refreshQmTeamsStatus() : void
+      {
+         var i:int = 0;
+         var team:Team = null;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            if(team.type == TeamType.QUEST_MASTER)
+            {
+               team.refreshStatus();
+            }
+            i++;
+         }
+      }
+      
+      private function addMapObject(mapObject:MapObject) : void
+      {
+         _mapObjects.push(mapObject);
+         _interactions.getObjectInteraction(mapObject);
+      }
+      
+      public function removeMapObject(mapObject:MapObject) : void
+      {
+         if(ArrayUtils.remove(_mapObjects,mapObject))
+         {
+            _interactions.removeObjectInteraction(mapObject);
+            if(selectedMapObject == mapObject)
+            {
+               selectedMapObject = null;
+            }
+         }
+      }
+      
+      public function addChest(chest:Chest) : void
+      {
+         _chests.push(chest);
+         addMapObject(chest);
+      }
+      
+      public function removeChestById(id:String) : void
+      {
+         for each(var chest:Chest in _chests)
+         {
+            if(chest.id == id)
+            {
+               removeChest(chest);
+               break;
+            }
+         }
+      }
+      
+      public function removeChest(chest:Chest) : void
+      {
+         if(ArrayUtils.remove(_chests,chest))
+         {
+            chestRemovedSignal.dispatch1(chest);
+            chest.destroy();
+            removeMapObject(chest);
+         }
+      }
+      
+      public function onChestPickUp(msg:String) : void
+      {
+         var chest:Chest = null;
+         var i:Number = NaN;
+         var tabB:Array = msg.split("$");
+         var tab:Array = tabB[0].split(",");
+         for(i = 0; i < _chests.length; )
+         {
+            if(_chests[i].id == tab[3])
+            {
+               chest = _chests[i];
+               if(tab[2] == Client.hero.nazwa)
+               {
+                  chest.showOpenAndRemove();
+               }
+               else
+               {
+                  removeChest(chest);
+               }
+               break;
+            }
+            i++;
+         }
+      }
+      
+      public function onMyChestPickUp(msg:String, rodzaj:Number) : void
+      {
+         var _loc3_:Number = rodzaj;
+         if(2 !== _loc3_)
+         {
+            SoundUI.ui_skrzynka();
+         }
+         else
+         {
+            SoundUI.ui_skrzynka_platynowa();
+         }
+      }
+      
+      public function executeClickWalkingCurrentMouse(delayedParams:Array = null) : void
+      {
+         if(_mapView3D == null)
+         {
+            return;
+         }
+         if(!delayedParams)
+         {
+            _mapView3D.mouse3DPosition.copyToPoint(_tmpPoint);
+         }
+         if(InteractionTimeBlocker.blockAndScheduleMapInteraction(executeClickWalkingCurrentMouse,[_tmpPoint]))
+         {
+            return;
+         }
+         if(delayedParams && delayedParams.length)
+         {
+            executeClickWalking(delayedParams[0]);
+         }
+         else
+         {
+            executeClickWalking(_tmpPoint);
+         }
+      }
+      
+      final public function executeClickWalking(point3D:Point) : void
+      {
+         MovementManager.AUTO_ACTION.action = "actionMove";
+         var endP:Point = new Point();
+         CoordinatesHelper.from3DtoTile2D(endP,point3D.x,point3D.y);
+         showClickParticle(point3D.x,point3D.y);
+         if(!isMobile())
+         {
+            point3D.x = point3D.y = 0;
+         }
+         if(_movementManager.goto2(null,endP,point3D.x,point3D.y))
+         {
+            _cameraPositionManager.lookAtHero(true);
+            if(!Settings.JOYSTICK_MODE)
+            {
+               selectedMapObject = null;
+            }
+         }
+         Dbg.logInteraction && Dbg.traceTime("click");
+         clicked();
+      }
+      
+      private function clicked() : void
+      {
+         mapClickedSignal.dispatch();
+      }
+      
+      private function showClickParticle(x:Number, y:Number) : void
+      {
+         if(!Settings.SHOW_MOVE_PARTICLE)
+         {
+            return;
+         }
+         if(!_mapView3D)
+         {
+            return;
+         }
+         if(!_clickParticle)
+         {
+            _clickParticle = MapParticleObjectPool.getInstance().getParticle("ui_map_click");
+         }
+         if(!_clickParticle)
+         {
+            return;
+         }
+         EasyTimer.stop(this,false,removeClickParticle);
+         EasyTimer.timer(this,1.5,removeClickParticle);
+         _mapView3D.addChild(_clickParticle);
+         _clickParticle.animatorStart();
+         _clickParticle.zOffset = 2147483647;
+         _clickParticle.x = x;
+         _clickParticle.y = 2;
+         _clickParticle.z = y;
+      }
+      
+      public function showMechanismParticle(mech:Mechanism2DModel, x:int, y:int) : void
+      {
+         if(!_mapView3D)
+         {
+            return;
+         }
+         if(!_mechParticle)
+         {
+            _mechParticle = MapParticleObjectPool.getInstance().getParticle("a_blink_door");
+         }
+         if(!_mechParticle)
+         {
+            return;
+         }
+         _mapView3D.addChild(_mechParticle);
+         _mechParticle.animatorStart();
+         _mechParticle.zOffset = 0;
+         _mechParticle.x = x;
+         _mechParticle.y = 2;
+         _mechParticle.z = y;
+      }
+      
+      public function removeMechParticle(mech:Mechanism2DModel) : void
+      {
+         if(_selectedMapObject != mech)
+         {
+            return;
+         }
+         if(!_mechParticle)
+         {
+            return;
+         }
+         if(_mechParticle.parent)
+         {
+            _mechParticle.parent.removeChild(_mechParticle);
+         }
+         _mechParticle.animatorStop();
+      }
+      
+      private function removeClickParticle() : void
+      {
+         if(!_clickParticle)
+         {
+            return;
+         }
+         if(_clickParticle.parent)
+         {
+            _clickParticle.parent.removeChild(_clickParticle);
+         }
+         _clickParticle.animatorStop();
+      }
+      
+      public function showDestinationParticle(x:Number, z:Number) : void
+      {
+         if(!Settings.SHOW_MOVE_PARTICLE)
+         {
+            return;
+         }
+         if(_destinationParticle == null)
+         {
+            _destinationParticle = MapParticleObjectPool.getInstance().getParticle("ui_map_destination");
+         }
+         if(!_destinationParticle || !_destinationParticle.animator)
+         {
+            return;
+         }
+         if(!_mapView3D)
+         {
+            return;
+         }
+         _mapView3D.addChild(_destinationParticle);
+         _destinationParticle.animatorStart();
+         _destinationParticle.zOffset = 0;
+         _destinationParticle.x = x;
+         _destinationParticle.y = 2;
+         _destinationParticle.z = z;
+      }
+      
+      public function removeDestinationParticle() : void
+      {
+         if(_destinationParticle && _destinationParticle.parent)
+         {
+            _destinationParticle.parent.removeChild(_destinationParticle);
+         }
+         if(_destinationParticle)
+         {
+            _destinationParticle.animatorStop();
+         }
+      }
+      
+      public function isDangerousField(x2d:Number, y2d:Number) : Boolean
+      {
+         for each(var team:Team in _teams)
+         {
+            if(team.isAggressive() && team.team3D)
+            {
+               if(Math.abs(team.getX2dTile() - x2d) <= _attackDistance && Math.abs(team.getY2dTile() - y2d) <= _attackDistance)
+               {
+                  if(!MovementManager.getInstance().mapping.behindTheThickWall(x2d,y2d,team.getX2dTile(),team.getY2dTile()))
+                  {
+                     return true;
+                  }
+               }
+            }
+         }
+         return false;
+      }
+      
+      public function get mapView3D() : MapView3D
+      {
+         return _mapView3D;
+      }
+      
+      public function set mapView3D(value:MapView3D) : void
+      {
+         _mapView3D = value;
+      }
+      
+      public function onMyTeamMovement(msg:String, x3d:int, y3d:int, nextX3d:int, nextY3d:int, walkType:uint = 4) : void
+      {
+         var data:String = null;
+         var t:Team = null;
+         var i:int = 0;
+         var j:int = 0;
+         var k:int = 0;
+         var l:int = 0;
+         var tab:Array = msg.split("$");
+         var tabXY:Array = tab[0].split(",");
+         var x:Number = Number(tabXY[0]);
+         var y:Number = Number(tabXY[1]);
+         _movementManager.updateServerPosition(x,y);
+         if(Client.id != Client.myTeam.leaderId)
+         {
+            _movementManager.updateLocalPosition(x,y);
+            if(Client.myTeam.lookOverride != null)
+            {
+               Client.myTeam.modelGoTo(x3d,y3d,true,nextX3d,nextY3d,"run",WalkType.getSpeedUser(4,MapManager3D.getInstance().isInsideArea()),4);
+            }
+            else if(walkType == 1)
+            {
+               Client.myTeam.modelGoTo(x3d,y3d,true,nextX3d,nextY3d,"walk",WalkType.getSpeedUser(1,MapManager3D.getInstance().isInsideArea()),4);
+            }
+            else
+            {
+               Client.myTeam.modelGoTo(x3d,y3d,true,nextX3d,nextY3d,"run",0,WalkType.getAnimSpeedMultiUser(walkType));
+            }
+         }
+         var teamArr:Array = tab[1].split("&");
+         var arrTeamUser:Array = teamArr[0].split("%");
+         var arrTeamAi:Array = teamArr[1].split("%");
+         var arrTeamQM:Array = teamArr[2].split("%");
+         var arrChests:Array = teamArr[3].split("%");
+         for(i = 0; i < arrTeamUser.length - 1; )
+         {
+            data = arrTeamUser[i];
+            if(TextUtils.isEmpty(data))
+            {
+               traceWarning("MapManager3D.onMyTeamMovement() Empty TeamUser data");
+            }
+            else
+            {
+               t = new TeamUser(data);
+               t = onNewTeamInSight(t,false,0,0,false,0,0,0,false);
+               if(t.team3D == null)
+               {
+                  _initTeamModelsVec.push(t);
+               }
+            }
+            i++;
+         }
+         for(j = 0; j < arrTeamAi.length - 1; )
+         {
+            data = arrTeamAi[j];
+            if(TextUtils.isEmpty(data))
+            {
+               traceWarning("MapManager3D.onMyTeamMovement() Empty TeamMob data");
+            }
+            else
+            {
+               t = new TeamMob(data);
+               t = onNewTeamInSight(t,false,0,0,false,0,0,0,false);
+               if(t.team3D == null)
+               {
+                  _initTeamModelsVec.push(t);
+               }
+            }
+            j++;
+         }
+         for(k = 0; k < arrTeamQM.length - 1; )
+         {
+            data = arrTeamQM[k];
+            if(TextUtils.isEmpty(data))
+            {
+               traceWarning("MapManager3D.onMyTeamMovement() Empty TeamQM data");
+            }
+            else
+            {
+               t = new TeamQM(data);
+               t = onNewTeamInSight(t,false,0,0,false,0,0,0,false);
+               if(t.team3D == null)
+               {
+                  _initTeamModelsVec.push(t);
+               }
+            }
+            k++;
+         }
+         for(l = 0; l < arrChests.length - 1; )
+         {
+            addChest(new Chest(arrChests[l]));
+            l++;
+         }
+         if(_initTeamModelsVec.length > 0)
+         {
+            frameBasedInitTeamOnLiveMap();
+         }
+         removeInvisible();
+         recalculateReducedViewDistance(false);
+      }
+      
+      public function onNewTeamEnterArea(team:Team, mapMove:Boolean = false, newX3d:Number = 0, newY3d:Number = 0, onEnterNewArea:Boolean = false, speed:int = 190, animType:int = 4, animSpeedMulti:Number = 1) : void
+      {
+         if(willBeVisible(team))
+         {
+            onNewTeamInSight(team,mapMove,newX3d,newY3d,onEnterNewArea,speed,animType,animSpeedMulti,true);
+            recalculateReducedViewDistance();
+         }
+         else
+         {
+            team = onNewTeamInSight(team,mapMove,newX3d,newY3d,onEnterNewArea,speed,animType,animSpeedMulti,false);
+            if(team.team3D == null)
+            {
+               team.initTeamView(false,true);
+            }
+            hideTeam(team,false);
+         }
+      }
+      
+      private function frameBasedInitTeamOnLiveMap() : void
+      {
+         var t:Team = _initTeamModelsVec.pop();
+         if(t != null && !t.destroyed)
+         {
+            if(willBeVisible(t))
+            {
+               t.initTeamView(true);
+            }
+            else
+            {
+               t.initTeamView(false,true);
+               hideTeam(t,false);
+            }
+            initializedTeamAddedSignal.dispatch1(t);
+         }
+         if(_initTeamModelsVec.length > 0)
+         {
+            if(FrameTime.getFrameCurrentTime() < 30)
+            {
+               frameBasedInitTeamOnLiveMap();
+            }
+            else
+            {
+               EasyTimer.timer(this,0.001,frameBasedInitTeamOnLiveMap);
+            }
+         }
+      }
+      
+      public function getDistanceReport() : String
+      {
+         var msg:String = TextUtils.getColorValueReversRow(int(100 * _distanceVisibleReducedUsers / _distanceVisible),"dist_user",50,100,"%") + "= " + _distanceVisibleReducedUsers + " / " + TextUtils.getColorValueReversRow(int(100 * _distanceVisibleReducedNPC / _distanceVisible),"npc_dist",50,100,"%") + " = " + _distanceVisibleReducedNPC + "<br/>";
+         var countUsers:int = 0;
+         var countNpc:int = 0;
+         for each(var team:Team in _teams)
+         {
+            if(team.team3D)
+            {
+               if(team.isUser())
+               {
+                  if(Client.myTeam != team)
+                  {
+                     countUsers++;
+                  }
+               }
+               else
+               {
+                  countNpc++;
+               }
+            }
+         }
+         msg += "user visible: " + countPlayersInReducedRange() + " / " + countUsers + " " + TextUtils.getColorValueReversRow(int(countPlayersInReducedRange() * 100 / countUsers),"",50,100,"%") + " limit: " + MAX_TEAMS_USER_VISIBLE + "<br/>";
+         return msg + ("npc visible: " + countNPCInReducedRange() + " / " + countNpc + " " + TextUtils.getColorValueReversRow(int(countNPCInReducedRange() * 100 / countNpc),"",50,100,"%") + " limit: " + MAX_TEAMS_NPC_VISIBLE);
+      }
+      
+      private function hideTeamsOutOfReducedRange(tween:Boolean) : void
+      {
+         for each(var team:Team in _teams)
+         {
+            if(team.isUser())
+            {
+               if(team != Client.myTeam)
+               {
+                  if(isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedUsers))
+                  {
+                     unHideTeam(team,tween);
+                  }
+                  else
+                  {
+                     hideTeam(team,tween);
+                  }
+               }
+            }
+            else if(isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedNPC))
+            {
+               unHideTeam(team,tween);
+            }
+            else
+            {
+               hideTeam(team,tween);
+            }
+         }
+      }
+      
+      public function calculateReducedViewDistance(loopCount:int = 0) : void
+      {
+         var count:int = 0;
+         if(loopCount > 30)
+         {
+            return;
+         }
+         if(countUserTeams() - 1 > MAX_TEAMS_USER_VISIBLE)
+         {
+            count = countPlayersInReducedRange();
+            if(count > MAX_TEAMS_USER_VISIBLE)
+            {
+               if(count > 1.2 * MAX_TEAMS_USER_VISIBLE)
+               {
+                  _distanceVisibleReducedUsers -= 5;
+               }
+               else
+               {
+                  _distanceVisibleReducedUsers -= 1;
+               }
+               if(_distanceVisibleReducedUsers < MIN_DISTANCE_VISIBLE_USERS)
+               {
+                  _distanceVisibleReducedUsers = MIN_DISTANCE_VISIBLE_USERS;
+               }
+               else
+               {
+                  calculateReducedViewDistance(++loopCount);
+               }
+            }
+         }
+         else
+         {
+            _distanceVisibleReducedUsers = _distanceVisible;
+         }
+      }
+      
+      private function countUserTeams() : int
+      {
+         var count:int = 0;
+         for each(var team:Team in _teams)
+         {
+            if(team.isUser())
+            {
+               count++;
+            }
+         }
+         return count;
+      }
+      
+      private function countNpcTeams() : int
+      {
+         var count:int = 0;
+         for each(var team:Team in _teams)
+         {
+            if(!team.isUser())
+            {
+               count++;
+            }
+         }
+         return count;
+      }
+      
+      public function calculateReducedViewDistanceNPC(loopCount:int = 0) : void
+      {
+         var count:int = 0;
+         if(loopCount > 30)
+         {
+            return;
+         }
+         if(countNpcTeams() > MAX_TEAMS_NPC_VISIBLE)
+         {
+            count = countNPCInReducedRange();
+            if(count > MAX_TEAMS_NPC_VISIBLE)
+            {
+               if(count > 1.2 * MAX_TEAMS_NPC_VISIBLE)
+               {
+                  _distanceVisibleReducedNPC -= 5;
+               }
+               else
+               {
+                  _distanceVisibleReducedNPC -= 1;
+               }
+               if(_distanceVisibleReducedNPC < MIN_DISTANCE_VISIBLE_NPC)
+               {
+                  _distanceVisibleReducedNPC = MIN_DISTANCE_VISIBLE_NPC;
+               }
+               else
+               {
+                  calculateReducedViewDistanceNPC(++loopCount);
+               }
+            }
+         }
+         else
+         {
+            _distanceVisibleReducedNPC = _distanceVisible;
+         }
+      }
+      
+      private function recalculateReducedViewDistance(force:Boolean = false) : void
+      {
+         var count:int = 0;
+         var countNPC:int = 0;
+         var reHide:Boolean = false;
+         if(_teams.length <= MAX_TEAMS_USER_VISIBLE && _teams.length <= MAX_TEAMS_NPC_VISIBLE)
+         {
+            return;
+         }
+         var countUTeams:int = countUserTeams();
+         var countNTeams:int = countNpcTeams();
+         if(countUTeams - 1 > MAX_TEAMS_USER_VISIBLE || countNTeams > MAX_TEAMS_NPC_VISIBLE)
+         {
+            if(!(force || countUTeams - 1 > MAX_TEAMS_USER_VISIBLE * 1.2 || TimeUtils.getTimerANR() - _lastTimeRecalculatedDistance > 500))
+            {
+               return;
+            }
+            _lastTimeRecalculatedDistance = TimeUtils.getTimerANR();
+            count = countPlayersInReducedRange();
+            countNPC = countNPCInReducedRange();
+            if(count > 1.2 * MAX_TEAMS_USER_VISIBLE)
+            {
+               calculateReducedViewDistance();
+               hideTeamsOutOfReducedRange(false);
+               return;
+            }
+            if(count > MAX_TEAMS_USER_VISIBLE || countNPC > MAX_TEAMS_NPC_VISIBLE)
+            {
+               if(count > MAX_TEAMS_USER_VISIBLE)
+               {
+                  _distanceVisibleReducedUsers -= 1;
+                  if(_distanceVisibleReducedUsers < MIN_DISTANCE_VISIBLE_USERS)
+                  {
+                     _distanceVisibleReducedUsers = MIN_DISTANCE_VISIBLE_USERS;
+                  }
+               }
+               if(countNPC > MAX_TEAMS_NPC_VISIBLE)
+               {
+                  _distanceVisibleReducedNPC -= 1;
+                  if(_distanceVisibleReducedNPC < MIN_DISTANCE_VISIBLE_NPC)
+                  {
+                     _distanceVisibleReducedNPC = MIN_DISTANCE_VISIBLE_NPC;
+                  }
+               }
+               hideTeamsOutOfReducedRange(true);
+            }
+            else
+            {
+               reHide = false;
+               if(_distanceVisibleReducedUsers < _distanceVisible)
+               {
+                  if(count < MAX_TEAMS_USER_VISIBLE * 0.8)
+                  {
+                     ++_distanceVisibleReducedUsers;
+                     count = countPlayersInReducedRange();
+                     if(count > MAX_TEAMS_USER_VISIBLE)
+                     {
+                        --_distanceVisibleReducedUsers;
+                     }
+                     else
+                     {
+                        reHide = true;
+                     }
+                  }
+               }
+               if(countNPC < MAX_TEAMS_NPC_VISIBLE * 0.8)
+               {
+                  ++_distanceVisibleReducedNPC;
+                  countNPC = countNPCInReducedRange();
+                  if(countNPC > MAX_TEAMS_NPC_VISIBLE)
+                  {
+                     --_distanceVisibleReducedNPC;
+                  }
+                  else
+                  {
+                     reHide = true;
+                  }
+               }
+               if(reHide)
+               {
+                  hideTeamsOutOfReducedRange(true);
+               }
+            }
+         }
+         else if(_distanceVisibleReducedUsers != _distanceVisible || _distanceVisibleReducedNPC != _distanceVisible)
+         {
+            _distanceVisibleReducedUsers = _distanceVisible;
+            _distanceVisibleReducedNPC = _distanceVisible;
+            for each(var team:Team in _teams)
+            {
+               unHideTeam(team);
+            }
+         }
+      }
+      
+      private function countPlayersInReducedRange() : int
+      {
+         var count:int = 0;
+         for each(var team:Team in _teams)
+         {
+            if(team != Client.myTeam && team.isUser())
+            {
+               if(isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedUsers))
+               {
+                  count++;
+               }
+            }
+         }
+         return count;
+      }
+      
+      private function countNPCInReducedRange() : int
+      {
+         var count:int = 0;
+         for each(var team:Team in _teams)
+         {
+            if(!team.isUser())
+            {
+               if(isInRange(CoordinatesHelper.from3DToTile2D_X(team.x),CoordinatesHelper.from3DToTile2D_Y(team.y),_distanceVisibleReducedNPC))
+               {
+                  count++;
+               }
+            }
+         }
+         return count;
+      }
+      
+      private function unHideTeam(team:Team, tween:Boolean = false) : void
+      {
+         if(team.team3D && !team.team3D.visible)
+         {
+            if(team.team3D.superLowMode)
+            {
+               team.team3D.reloadTeam();
+            }
+            team.team3D.visible = true;
+            if(tween)
+            {
+               team.team3D.tweenAlpha(1,0,0,false);
+            }
+            team.team3D.starlingContainer.visible = true;
+         }
+      }
+      
+      private function hideTeam(team:Team, tween:Boolean = false) : void
+      {
+         if(team.team3D && team.team3D.visible)
+         {
+            if(tween)
+            {
+               team.team3D.tweenAlpha(0,1,0,false);
+               EasyTimer.timer(this,0.1,turnOffVisibility,[team]);
+            }
+            else
+            {
+               team.team3D.visible = false;
+            }
+         }
+      }
+      
+      private function turnOffVisibility(team:Team) : void
+      {
+         if(team.team3D != null)
+         {
+            team.team3D.visible = false;
+         }
+      }
+      
+      protected function isInRange(x2dTile:int, y2dTile:int, distInTiles:int) : Boolean
+      {
+         var dx:Number = Math.abs(_movementManager.serverX - x2dTile);
+         var dy:Number = Math.abs(_movementManager.serverY - y2dTile);
+         if(dx > distInTiles || dy > distInTiles)
+         {
+            return false;
+         }
+         return true;
+      }
+      
+      protected function communicate(txt:String) : void
+      {
+      }
+      
+      public function onMappingReady() : void
+      {
+         MovementManager.getInstance().coordsSignal.dispatch3(_movementManager.serverX,_movementManager.serverY,getRegion());
+         markObjectAsLoaded(_movementManager.mapping,"mapping");
+         MovementServer.getMappingChanges();
+      }
+      
+      public function addObjectToLoad(loadedObject:Object, name:String = null) : void
+      {
+         if(_completeObserver)
+         {
+            if(!name)
+            {
+               name = loadedObject.toString();
+            }
+            _completeObserver.addProcess(loadedObject,name);
+            updatePreloader();
+         }
+      }
+      
+      private function updatePreloader() : void
+      {
+         if(_mapPreloader)
+         {
+            if(_completeObserver)
+            {
+               _mapPreloader.setProgress(_completeObserver.getProgress());
+            }
+            else
+            {
+               _mapPreloader.setProgress(1);
+            }
+         }
+      }
+      
+      public function reloadSuperLowMe() : void
+      {
+         Client.myTeam.team3D.reloadTeam();
+      }
+      
+      public function reloadSuperLow() : void
+      {
+         for each(var team:Team in _teams)
+         {
+            if(team.team3D && team.isUser() && Client.myTeam != team)
+            {
+               team.team3D.reloadTeam();
+               team.team3D.visible = true;
+               team.team3D.tweenAlpha(1,1,0,false);
+            }
+         }
+      }
+      
+      public function markObjectAsLoaded(loadedObject:Object, msg:String = null) : void
+      {
+         if(_completeObserver)
+         {
+            _completeObserver.markAsCompleted(loadedObject);
+            updatePreloader();
+         }
+      }
+      
+      protected function customsOnMapReady() : void
+      {
+         if(Settings.MERGE_ENVIRO_PLANES && _mapView3D.planeSheetView)
+         {
+            _mapView3D.planeSheetView.mergePlanes();
+         }
+      }
+      
+      private function postMapViewReady() : void
+      {
+         dbgTimeStop("map postMapViewReady");
+         _uiManager.removeMapPreloader(_mapPreloader);
+         _mapPreloader = null;
+         CameraManager.getInstance().onResize();
+         _cameraPositionManager.start();
+         _uiManager.onResize();
+         teamMoved(Client.myTeam);
+         _dbg2d = new Sprite();
+         _uiManager.mapLayers && _uiManager.mapLayers.debug.addChild(_dbg2d);
+         if(Settings.RAIN)
+         {
+            _mapView3D.addChild(_rain);
+            _rain.start();
+         }
+         TaernCore.screenChangeSignal.dispatch();
+         EnterFrameSignal.ins().signalAfterFrames(5,MapStarlingContainer.hardResetForAll);
+         _mapView3D.start();
+         if(Client.rageData > -1)
+         {
+            Client.hero.rageBarDataVO.currentRageBarPoints = Client.rageData;
+            Client.zawodnik.rage.value = Client.rageData;
+            Client.rageData = -1;
+         }
+         mapViewReadySignal.dispatch();
+         if(_areaVO.mapReadyMask)
+         {
+            UIManager.getInstance().mapReadyMaskOn();
+         }
+         addLight();
+         UIManager.getInstance().windowClosedSignal.add(onWindowClosedSignal);
+         isMapViewReady.value = true;
+         _fpsBundle.reset();
+         var xy:String = MovementManager.getInstance().serverX + "," + MovementManager.getInstance().serverY;
+         UserTracking.addAction(this,"start at: " + xy + " load time " + TimeUtils.showTimeLeft(TimeUtils.getTimerANR() - _startTimer),"map ready");
+         FrameTime.recordMapLoad();
+         FrameTime.onEnterAreaFinished("a" + _areaData.idArea + " i" + _instanceId + " time: " + (TimeUtils.getTimerANR() - _startTimer));
+      }
+      
+      public function particleEmmiterForObjectRefresh(msg:String = "") : void
+      {
+         var i:int = 0;
+         var emitter:ParticleEmitterForObjects = null;
+         for(i = 0; i < particleEmittersForObjects.length; )
+         {
+            emitter = particleEmittersForObjects[i];
+            emitter.updated(msg);
+            i++;
+         }
+      }
+      
+      public function onWindowClosedSignal(primeWindowType:String) : void
+      {
+         if(primeWindowType == "fight_summary")
+         {
+            fightSummaryExitSignal.dispatch();
+         }
+      }
+      
+      public function addLight() : void
+      {
+         if(_mapView3D.lightsView)
+         {
+            if(Settings.INIT_LIGHTS && Settings.LIGHTS)
+            {
+               _mapView3D.lightsView.initMapLights(areaData.lightMulti);
+               if(Client.myTeam && Client.myTeam.team3D)
+               {
+                  Client.myTeam.team3D.addChild(_mapView3D.lightsView.mapUserLight);
+               }
+            }
+         }
+      }
+      
+      public function addCenterMech(layer:MechanismLayerParticle) : void
+      {
+         _centerLayers.push(layer);
+         throw new IllegalOperationError("nie skończone (brak czyszczenia)");
+      }
+      
+      public function onBeforeRender() : void
+      {
+         var i:int = 0;
+         var particle:MechanismLayerParticle = null;
+         var countt:int = 0;
+         if(Client.myTeam && Client.myTeam.team3D && _view3D.stage)
+         {
+            _tmpPoint3D2.copyFrom(Client.myTeam.team3D.scenePosition);
+            _view3D.project2(_tmpPoint3D2,_tmpPoint3D);
+            if(!MathUtils.isNaNANR(_tmpPoint3D.x))
+            {
+               heroScreenPosition.setXY(_tmpPoint3D.x,_tmpPoint3D.y);
+            }
+         }
+         CoordinatesHelper.calculateMapPositionByScreenCenterPosition(_centerPoint);
+         for(i = 0; i < _centerLayers.length; )
+         {
+            particle = _centerLayers[i];
+            if(particle.mechanism2D != null)
+            {
+               particle.mechanism2D.x = _centerPoint.x;
+               particle.mechanism2D.z = _centerPoint.y;
+            }
+            i++;
+         }
+         if(_dbg2d)
+         {
+            _dbg2d.removeChildren();
+            if(Flags.mapTeamBounds.value)
+            {
+               _dbg2d.touchable = false;
+               countt = 0;
+               for each(var mapObject:MapObject in _mapObjects)
+               {
+                  if(mapObject is Chest)
+                  {
+                     countt++;
+                     dummy();
+                  }
+                  if(mapObject.mapStarlingContainer.isOnScreen.value)
+                  {
+                     DebugDrawUtil.drawRect(_dbg2d,mapObject.mapStarlingContainer.globalScreenBounds,16711680,0.3);
+                  }
+               }
+               dbgLogVal("chests count",countt);
+            }
+         }
+      }
+      
+      public function clearMap() : void
+      {
+         FrameTime.startTimer("MapManager3D.clearMap");
+         clearMapANR();
+         FrameTime.stopTimer("MapManager3D.clearMap");
+      }
+      
+      public function clearMapANR() : void
+      {
+         clearMapANRFastOperations();
+         _mapClearService = new MapClearService();
+         _mapClearService.init();
+         _mapObjects.length = 0;
+         _mapObjectsOver.length = 0;
+         _chests = new Vector.<Chest>();
+         _teams = new Vector.<Team>();
+         clearedSignal.dispatch();
+      }
+      
+      public function clearMapANRFastOperations() : void
+      {
+         FrameTime.startTimer("MapManager3D.clearMapANRFastOperations.1");
+         EnterFrameSignal.signal.remove(postMapViewReady);
+         UserTracking.addAction(this,"average " + _areaData.idArea.toString() + " fps: " + _fpsBundle.getFPS(),"map exit");
+         isMapViewReady.value = false;
+         if(_completeObserver)
+         {
+            _completeObserver.remove(onLoadings_Ready);
+            _completeObserver.destroy();
+            _completeObserver = null;
+            _uiManager.removeMapPreloader(_mapPreloader);
+            _mapPreloader = null;
+         }
+         _rain.setNoRain(true);
+         _cameraPositionManager && _cameraPositionManager.stop();
+         EasyTimer.stop(this,true,removeClickParticle);
+         EasyTimer.stop(this,false,frameBasedInitTeamOnLiveMap);
+         _initTeamModelsVec = new Vector.<Team>();
+         MovementManagerAI.clear();
+         clearHighlighted();
+         selectedMapObject = null;
+         _mapView3D.mouse3DPosition.changedSignal.remove(refreshMousePositions);
+         FrameTime.stopTimer("MapManager3D.clearMapANRFastOperations.1");
+         FrameTime.startTimer("MapManager3D.clearMapANRFastOperations.2");
+         if(_mapView3D)
+         {
+            _view3D.scene.removeChild(_mapView3D);
+            _mapView3D.removeFromParent();
+            Actuate.stop(_mapView3D);
+            MapViewFactory.recycle(_mapView3D);
+            _mapView3D.pause();
+            _rain.stopRain();
+            _mapView3D = null;
+         }
+         if(_dbg2d)
+         {
+            _dbg2d.removeFromParent();
+            _dbg2d = null;
+         }
+         CursorLayer.mapGround.clearStack(this);
+         UIManager.getInstance().windowClosedSignal.remove(onWindowClosedSignal);
+         FrameTime.stopTimer("MapManager3D.clearMapANRFastOperations.2");
+      }
+      
+      public function clearHighlighted() : void
+      {
+         for each(var team:Team in _teams)
+         {
+            team.isHighlighted.value = false;
+         }
+      }
+      
+      public function teamMoved(t:Team) : void
+      {
+         var i:int = 0;
+         var emitter:ParticleEmitter = null;
+         if(t.team3D != null && t.team3D.visible)
+         {
+            FrameTime.startTimer("teamMove.particleEmmiters");
+            if(_particleEmitters != null && _particleEmitters.length > 0)
+            {
+               for(i = 0; i < _particleEmitters.length; )
+               {
+                  emitter = _particleEmitters[i];
+                  if(emitter.onTeamMoved(t))
+                  {
+                  }
+                  i++;
+               }
+            }
+            FrameTime.stopTimer("teamMove.particleEmmiters");
+         }
+         if(t == Client.myTeam)
+         {
+            FrameTime.startTimer("teamMove.myTeamMovedSignal");
+            myTeamMovedSignal.dispatch();
+            FrameTime.stopTimer("teamMove.myTeamMovedSignal");
+         }
+      }
+      
+      public function teamDestroyed(t:Team) : void
+      {
+         var i:int = 0;
+         var emitter:ParticleEmitter = null;
+         if(t.team3D == null || _particleEmitters == null || _particleEmitters.length == 0)
+         {
+            return;
+         }
+         FrameTime.startTimer("teamDestroyed.particleEmmiters");
+         for(i = 0; i < _particleEmitters.length; )
+         {
+            emitter = _particleEmitters[i];
+            emitter.onTeamDestroy(t);
+            i++;
+         }
+         FrameTime.stopTimer("teamDestroyed.particleEmmiters");
+      }
+      
+      public function getRegion() : Region
+      {
+         if(_movementManager.mapping != null)
+         {
+            return _movementManager.mapping.getRegion(_movementManager.serverX,_movementManager.serverY);
+         }
+         return null;
+      }
+      
+      public function updateRegionInfo() : void
+      {
+         MovementManager.getInstance().coordsSignal.dispatch3(_movementManager.serverX,_movementManager.serverY,getRegion());
+      }
+      
+      public function mapModelScaleChanged() : void
+      {
+         var i:int = 0;
+         var team:Team = null;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            team.team3D.wrapper.scaleX = team.team3D.wrapper.scaleY = team.team3D.wrapper.scaleZ = Settings.MAP_MODEL_SCALE * team.scale100 / 100;
+            i++;
+         }
+      }
+      
+      public function findTeam(id:String) : Team
+      {
+         var i:int = 0;
+         var team:TeamQM = null;
+         if(id == "user")
+         {
+            return Client.myTeam;
+         }
+         i = 0;
+         while(i < _teams.length)
+         {
+            if(_teams[i] is TeamQM)
+            {
+               team = TeamQM(_teams[i]);
+               if(team.id.split("_")[1] == id)
+               {
+                  return team;
+               }
+            }
+            i++;
+         }
+         return null;
+      }
+      
+      public function addMapMessage(universalID:String, txt:String, delay:Boolean = true) : void
+      {
+         if(mapView3D != null)
+         {
+            if(delay)
+            {
+               EasyTimer.timerArgs(this,Math.random() * 0.5,addMapMessage,universalID,txt,false);
+            }
+            else
+            {
+               mapView3D.mapMessages.addMessageByUnversalID(universalID,txt);
+            }
+         }
+      }
+      
+      public function cancelMovement(id:String) : void
+      {
+         var t:Team = getTeamById(id);
+         if(t != null)
+         {
+            t.cancelMovePrediction();
+         }
+      }
+      
+      public function get selectedMapObject() : MapObject
+      {
+         return _selectedMapObject;
+      }
+      
+      public function setSelectedMapObject(value:MapObject) : void
+      {
+         selectedMapObject = value;
+      }
+      
+      public function set selectedMapObject(value:MapObject) : void
+      {
+         if(_selectedMapObject == value)
+         {
+            return;
+         }
+         if(_selectedMapObject)
+         {
+            _selectedMapObject.isSelected.value = false;
+            _selectedMapObject = null;
+         }
+         if(_targetMapObjectToSelect && value != _targetMapObjectToSelect)
+         {
+            return;
+         }
+         _selectedMapObject = value;
+         if(_selectedMapObject)
+         {
+            _selectedMapObject.isSelected.value = true;
+            if(_selectedMapObject is TeamQM)
+            {
+               MovementServer.requestStopQm((_selectedMapObject as TeamQM).id);
+            }
+         }
+      }
+      
+      public function get areaId() : Number
+      {
+         return _areaId;
+      }
+      
+      public function set areaId(value:Number) : void
+      {
+         _areaId = value;
+      }
+      
+      public function get instanceIdUnique() : int
+      {
+         return _instanceIdUnique;
+      }
+      
+      public function toggleBlobs() : void
+      {
+         var i:int = 0;
+         var team:Team = null;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            team.team3D.toggleShadowBlob();
+            i++;
+         }
+      }
+      
+      public function toggleCollision() : void
+      {
+         var i:int = 0;
+         var team:Team = null;
+         for(i = 0; i < _teams.length; )
+         {
+            team = _teams[i];
+            team.team3D.collisionMesh.visible = Settings.COLLSION_VISIBILITY;
+            i++;
+         }
+         for each(var chest:Chest in _chests)
+         {
+            chest.chest3D.collisionMesh.visible = Settings.COLLSION_VISIBILITY;
+         }
+      }
+      
+      public function updateTeamsVisibility(vis:Boolean) : void
+      {
+         var i:int = 0;
+         for(i = 0; i < _teams.length; )
+         {
+            if(_teams[i] != Client.myTeam)
+            {
+               _teams[i].team3D.visible = !Settings.TEAMS_INVISIBLE;
+            }
+            else
+            {
+               _teams[i].team3D.visible = true;
+            }
+            i++;
+         }
+      }
+      
+      public function getHero3DHeight() : Number
+      {
+         if(isInsideArea())
+         {
+            return 78;
+         }
+         return 88;
+      }
+      
+      public function isInsideArea() : Boolean
+      {
+         return areaData == null || areaData.scale >= 1.5;
+      }
+      
+      public function get instanceName() : String
+      {
+         return _instanceName;
+      }
+      
+      public function get teams() : Vector.<Team>
+      {
+         return _teams;
+      }
+      
+      public function get instanceId() : int
+      {
+         return _instanceId;
+      }
+      
+      public function get particleEmitters() : Vector.<ParticleEmitter>
+      {
+         return _particleEmitters;
+      }
+      
+      public function get areaData() : AreaData
+      {
+         return _areaData;
+      }
+      
+      public function isInstance() : Boolean
+      {
+         return _instanceId > -1;
+      }
+      
+      public function setCloudsEnable(enabled:Boolean) : void
+      {
+         if(mapView3D && mapView3D.skyClouds)
+         {
+            mapView3D.skyClouds.setIsEnabled(enabled);
+         }
+      }
+      
+      public function setVoteByUi(visible:Boolean) : void
+      {
+         if(mapView3D && mapView3D.skyClouds)
+         {
+            mapView3D.skyClouds.setVoteByUi(visible);
+         }
+      }
+      
+      public function get cameraPositionManager() : MapCameraPositionManager
+      {
+         return _cameraPositionManager;
+      }
+      
+      public function get marginTrigger() : Boolean
+      {
+         return _marginTrigger;
+      }
+      
+      public function get marginLeft() : Number
+      {
+         return _marginLeft;
+      }
+      
+      public function get marginBottom() : Number
+      {
+         return _marginBottom;
+      }
+      
+      public function get marginRight() : Number
+      {
+         return _marginRight;
+      }
+      
+      public function get marginTop() : Number
+      {
+         return _marginTop;
+      }
+      
+      public function get completeObserver() : CompleteObserver
+      {
+         return _completeObserver;
+      }
+      
+      public function get mapObjectsOver() : Vector.<MapObject>
+      {
+         return _mapObjectsOver;
+      }
+      
+      public function get mapObjects() : Vector.<MapObject>
+      {
+         return _mapObjects;
+      }
+      
+      public function get rain() : MapRainsManager
+      {
+         return _rain;
+      }
+      
+      public function get cameraContainer() : CameraContainer
+      {
+         return _cameraContainer;
+      }
+      
+      public function get previousAreaData() : AreaData
+      {
+         return _previousAreaData;
+      }
+      
+      public function setTargetMapObjectToSelect(value:MapObject) : void
+      {
+         _targetMapObjectToSelect = value;
+      }
+      
+      public function getClosestQM() : TeamQM
+      {
+         var closestTeam:TeamQM = null;
+         var dist:Number = NaN;
+         var myteam:TeamUser = Client.myTeam;
+         var closestDist:Number = 1.7976931348623157e+308;
+         for each(var team:Team in MapManager3D.getInstance().teams)
+         {
+            if(team is TeamQM)
+            {
+               dist = MathUtils.getDistance(team.x,team.y,myteam.x,myteam.y);
+               if(dist < closestDist)
+               {
+                  closestDist = dist;
+                  closestTeam = team as TeamQM;
+               }
+            }
+         }
+         return closestTeam;
+      }
+      
+      public function getClosestMob() : TeamMob
+      {
+         var closestTeam:TeamMob = null;
+         var dist:Number = NaN;
+         var myteam:TeamUser = Client.myTeam;
+         var closestDist:Number = 1.7976931348623157e+308;
+         for each(var team:Team in MapManager3D.getInstance().teams)
+         {
+            if(team is TeamMob)
+            {
+               dist = MathUtils.getDistance(team.x,team.y,myteam.x,myteam.y);
+               if(dist < closestDist)
+               {
+                  closestDist = dist;
+                  closestTeam = team as TeamMob;
+               }
+            }
+         }
+         return closestTeam;
+      }
+      
+      public function get interactions() : MapInteractionsManager
+      {
+         return _interactions;
+      }
+      
+      public function get instanceQuestBlock() : Boolean
+      {
+         return _instanceQuestBlock;
+      }
+      
+      public function onAutoJoinWrongLocation(x:int, y:int, teamId:String) : void
+      {
+         var t:Team = getTeamById(teamId);
+         if(t != null)
+         {
+            t.x = CoordinatesHelper.fromTile2DTo3D_X(x);
+            t.y = CoordinatesHelper.fromTile2DTo3D_Y(y);
+            if(!t.moving)
+            {
+               t.goTo(t.x,t.y);
+            }
+         }
+      }
+      
+      public function getParticleEmitterForObjectsByMechanism(mechanism:Mechanism2D) : ParticleEmitterForObjects
+      {
+         var i:int = 0;
+         for(i = 0; i < _particleEmittersForObjects.length; )
+         {
+            if(_particleEmittersForObjects[i].mechanism.mechanism_id == mechanism.mechanism_id)
+            {
+               return _particleEmittersForObjects[i];
+            }
+            i++;
+         }
+         return null;
+      }
+      
+      public function get particleEmittersForObjects() : Vector.<ParticleEmitterForObjects>
+      {
+         return _particleEmittersForObjects;
+      }
+      
+      public function get areaVO() : AreaSetupVO
+      {
+         return _areaVO;
+      }
+      
+      public function get movementManager() : MovementManager
+      {
+         return _movementManager;
+      }
+      
+      public function get teamsMobGPUPreloader() : TeamsMobGPUPreloader
+      {
+         return _teamsMobGPUPreloader;
+      }
+      
+      public function set teamsMobGPUPreloader(value:TeamsMobGPUPreloader) : void
+      {
+         _teamsMobGPUPreloader = value;
+      }
+      
+      public function get chests() : Vector.<Chest>
+      {
+         return _chests;
+      }
+      
+      public function get mapClearService() : MapClearService
+      {
+         return _mapClearService;
+      }
+      
+      public function get selectedByTap() : Boolean
+      {
+         return _selectedByTap;
+      }
+      
+      public function set selectedByTap(value:Boolean) : void
+      {
+         _selectedByTap = value;
+      }
+   }
+}
+
